@@ -1,0 +1,142 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: users
+    // Document ID: userId (uid)
+    // Fields: uid, displayName, email, photoURL, role, createdAt
+    //
+    // Collection: products
+    // Document ID: productId
+    // Fields: id, title, description, price, category, location, images, sellerId, sellerName, status, createdAt
+    //
+    // Collection: chats
+    // Document ID: chatId
+    // Fields: id, productId, buyerId, sellerId, lastMessage, updatedAt
+    //
+    // Collection: chats/{chatId}/messages
+    // Document ID: messageId
+    // Fields: id, chatId, senderId, text, createdAt
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'super_admin'] ||
+         (request.auth.token.email == "asif881480@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin' ||
+         (request.auth.token.email == "asif881480@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isSeller() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'seller';
+    }
+
+    // ===============================================================
+    // Validation Functions
+    // ===============================================================
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.role in ['user', 'seller', 'admin', 'super_admin'];
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['title', 'price', 'category', 'sellerId', 'status']) &&
+             data.title is string && data.title.size() < 100 &&
+             data.price is number && data.price >= 0 &&
+             data.category is string &&
+             data.sellerId is string &&
+             data.status in ['pending', 'approved', 'rejected', 'sold'];
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['productId', 'buyerId', 'sellerId', 'price', 'status']) &&
+             data.productId is string &&
+             data.buyerId is string &&
+             data.sellerId is string &&
+             data.price is number &&
+             data.status in ['pending', 'completed', 'cancelled'];
+    }
+
+    // ===============================================================
+    // Match Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if true; // Publicly readable
+      allow create: if (isSeller() || isAdmin()) && isValidProduct(request.resource.data) && request.resource.data.sellerId == request.auth.uid;
+      allow update: if (isAuthenticated() && (resource.data.sellerId == request.auth.uid || isAdmin())) && isValidProduct(request.resource.data);
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.sellerId == request.auth.uid);
+    }
+
+    match /chats/{chatId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.buyerId || request.auth.uid == resource.data.sellerId || isAdmin());
+      allow create: if isAuthenticated() && (request.auth.uid == request.resource.data.buyerId || request.auth.uid == request.resource.data.sellerId);
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.buyerId || request.auth.uid == resource.data.sellerId || isAdmin());
+      
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (request.auth.uid == get(/databases/$(database)/documents/chats/$(chatId)).data.buyerId || request.auth.uid == get(/databases/$(database)/documents/chats/$(chatId)).data.sellerId || isAdmin());
+        allow create: if isAuthenticated() && request.auth.uid == request.resource.data.senderId && (request.auth.uid == get(/databases/$(database)/documents/chats/$(chatId)).data.buyerId || request.auth.uid == get(/databases/$(database)/documents/chats/$(chatId)).data.sellerId);
+      }
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.buyerId || request.auth.uid == resource.data.sellerId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.buyerId && isValidOrder(request.resource.data);
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.sellerId || isAdmin()) && isValidOrder(request.resource.data);
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
+      allow update: if isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.authorId;
+      allow update, delete: if isAuthenticated() && (request.auth.uid == resource.data.authorId || isAdmin());
+    }
+
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.reporterId;
+      allow update: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+  }
+}

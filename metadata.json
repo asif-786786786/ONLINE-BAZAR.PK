@@ -1,0 +1,9 @@
+{
+  "name": "ONLINE BAZAR.PK",
+  "description": "A full-featured local marketplace for buying and selling products, featuring real-time chat, category filters, and user dashboards.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
